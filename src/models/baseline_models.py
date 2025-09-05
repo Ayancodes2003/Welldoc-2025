@@ -93,33 +93,122 @@ class FeatureEngineer:
         
         features = patients_df[['patient_id']].copy()
         
-        # Age features
+        # Age features - handle both numeric and categorical age
         if 'age' in patients_df.columns:
-            features['age'] = patients_df['age']
-            features['age_over_65'] = (patients_df['age'] >= 65).astype(int)
-            features['age_over_75'] = (patients_df['age'] >= 75).astype(int)
-            features['age_over_85'] = (patients_df['age'] >= 85).astype(int)
+            age_col = patients_df['age']
+            
+            # Handle categorical age ranges (like in diabetes dataset)
+            if age_col.dtype == 'object':
+                # Map age ranges to numeric values
+                age_mapping = {
+                    '[0-10)': 5, '[10-20)': 15, '[20-30)': 25, '[30-40)': 35,
+                    '[40-50)': 45, '[50-60)': 55, '[60-70)': 65, '[70-80)': 75,
+                    '[80-90)': 85, '[90-100)': 95
+                }
+                features['age'] = age_col.map(age_mapping).fillna(age_col.str.extract(r'(\d+)').astype(float).iloc[:, 0])
+            else:
+                features['age'] = age_col
+            
+            # Create age-based features
+            features['age_over_65'] = (features['age'] >= 65).astype(int)
+            features['age_over_75'] = (features['age'] >= 75).astype(int)
+            features['age_over_85'] = (features['age'] >= 85).astype(int)
         
-        # Gender
+        # Gender encoding
         if 'gender' in patients_df.columns:
             if 'gender' not in self.encoders:
                 self.encoders['gender'] = LabelEncoder()
-                features['gender_encoded'] = self.encoders['gender'].fit_transform(patients_df['gender'].fillna('Unknown'))
+                features['gender_encoded'] = self.encoders['gender'].fit_transform(
+                    patients_df['gender'].fillna('Unknown')
+                )
             else:
-                features['gender_encoded'] = self.encoders['gender'].transform(patients_df['gender'].fillna('Unknown'))
+                features['gender_encoded'] = self.encoders['gender'].transform(
+                    patients_df['gender'].fillna('Unknown')
+                )
+        
+        # Race/ethnicity encoding (for diabetes dataset)
+        if 'race' in patients_df.columns:
+            if 'race' not in self.encoders:
+                self.encoders['race'] = LabelEncoder()
+                features['race_encoded'] = self.encoders['race'].fit_transform(
+                    patients_df['race'].fillna('Unknown')
+                )
+            else:
+                features['race_encoded'] = self.encoders['race'].transform(
+                    patients_df['race'].fillna('Unknown')
+                )
         
         # Ethnicity if available
         if 'ethnicity' in patients_df.columns:
             if 'ethnicity' not in self.encoders:
                 self.encoders['ethnicity'] = LabelEncoder()
-                features['ethnicity_encoded'] = self.encoders['ethnicity'].fit_transform(patients_df['ethnicity'].fillna('Unknown'))
+                features['ethnicity_encoded'] = self.encoders['ethnicity'].fit_transform(
+                    patients_df['ethnicity'].fillna('Unknown')
+                )
             else:
-                features['ethnicity_encoded'] = self.encoders['ethnicity'].transform(patients_df['ethnicity'].fillna('Unknown'))
+                features['ethnicity_encoded'] = self.encoders['ethnicity'].transform(
+                    patients_df['ethnicity'].fillna('Unknown')
+                )
+        
+        # Clinical features for diabetes dataset
+        clinical_features = [
+            'time_in_hospital', 'num_lab_procedures', 'num_procedures',
+            'num_medications', 'number_outpatient', 'number_emergency',
+            'number_inpatient', 'number_diagnoses'
+        ]
+        
+        for feature in clinical_features:
+            if feature in patients_df.columns:
+                features[feature] = pd.to_numeric(patients_df[feature], errors='coerce')
+        
+        # Laboratory features for diabetes dataset
+        lab_features = ['max_glu_serum', 'A1Cresult']
+        for lab in lab_features:
+            if lab in patients_df.columns:
+                # Handle categorical lab results
+                if patients_df[lab].dtype == 'object':
+                    # For max_glu_serum: None, Norm, >200, >300
+                    if lab == 'max_glu_serum':
+                        glu_mapping = {'None': 0, 'Norm': 1, '>200': 2, '>300': 3}
+                        features[f'{lab}_encoded'] = patients_df[lab].map(glu_mapping).fillna(0)
+                    # For A1Cresult: None, Norm, >7, >8
+                    elif lab == 'A1Cresult':
+                        a1c_mapping = {'None': 0, 'Norm': 1, '>7': 2, '>8': 3}
+                        features[f'{lab}_encoded'] = patients_df[lab].map(a1c_mapping).fillna(0)
+                    else:
+                        # Generic categorical encoding
+                        if f'{lab}_encoder' not in self.encoders:
+                            self.encoders[f'{lab}_encoder'] = LabelEncoder()
+                            features[f'{lab}_encoded'] = self.encoders[f'{lab}_encoder'].fit_transform(
+                                patients_df[lab].fillna('Unknown')
+                            )
+                        else:
+                            features[f'{lab}_encoded'] = self.encoders[f'{lab}_encoder'].transform(
+                                patients_df[lab].fillna('Unknown')
+                            )
+                else:
+                    features[lab] = pd.to_numeric(patients_df[lab], errors='coerce')
+        
+        # Medication features for diabetes dataset
+        medication_features = [
+            'metformin', 'insulin', 'diabetesMed', 'change',
+            'repaglinide', 'nateglinide', 'glimepiride', 'glipizide', 'glyburide'
+        ]
+        
+        for med in medication_features:
+            if med in patients_df.columns:
+                # Convert medication changes to binary (Yes/No -> 1/0)
+                if patients_df[med].dtype == 'object':
+                    # Handle typical medication values: No, Steady, Up, Down
+                    med_mapping = {'No': 0, 'Steady': 1, 'Up': 2, 'Down': 3}
+                    features[f'{med}_encoded'] = patients_df[med].map(med_mapping).fillna(0)
+                else:
+                    features[med] = pd.to_numeric(patients_df[med], errors='coerce')
         
         return features
     
     def _create_vital_features(self, vitals_df: pd.DataFrame) -> pd.DataFrame:
-        """Create aggregated features from vitals data"""
+        """Create aggregated features from vitals data with temporal delta features"""
         
         # Get vital sign columns
         vital_cols = self.feature_config.get('vital_features', [])
@@ -133,7 +222,12 @@ class FeatureEngineer:
         features = []
         
         for patient_id in vitals_df['patient_id'].unique():
-            patient_vitals = vitals_df[vitals_df['patient_id'] == patient_id]
+            patient_vitals = vitals_df[vitals_df['patient_id'] == patient_id].copy()
+            
+            # Sort by timestamp if available
+            if 'measurement_date' in patient_vitals.columns:
+                patient_vitals['measurement_date'] = pd.to_datetime(patient_vitals['measurement_date'])
+                patient_vitals = patient_vitals.sort_values('measurement_date')
             
             patient_features = {'patient_id': patient_id}
             
@@ -149,7 +243,7 @@ class FeatureEngineer:
                         patient_features[f'{vital}_max'] = values.max()
                         patient_features[f'{vital}_range'] = values.max() - values.min()
                         
-                        # Recent values (last 7 days if date info available)
+                        # Recent values (last 7 observations)
                         if len(values) > 7:
                             recent_values = values.tail(7)
                             patient_features[f'{vital}_recent_mean'] = recent_values.mean()
@@ -157,9 +251,36 @@ class FeatureEngineer:
                         
                         # Count of measurements
                         patient_features[f'{vital}_count'] = len(values)
+                        
+                        # Add Δt features (time-since-last-observation)
+                        if 'measurement_date' in patient_vitals.columns:
+                            vital_measurements = patient_vitals[patient_vitals[vital].notna()]
+                            if len(vital_measurements) > 0:
+                                # Time since last measurement (in hours)
+                                last_measurement_date = vital_measurements['measurement_date'].iloc[-1]
+                                current_time = pd.Timestamp.now()
+                                time_since_last = (current_time - last_measurement_date).total_seconds() / 3600
+                                patient_features[f'{vital}_hours_since_last'] = time_since_last
+                                
+                                # Average time between measurements
+                                if len(vital_measurements) > 1:
+                                    time_diffs = vital_measurements['measurement_date'].diff().dt.total_seconds() / 3600
+                                    patient_features[f'{vital}_avg_interval_hours'] = time_diffs.mean()
+                                    patient_features[f'{vital}_max_interval_hours'] = time_diffs.max()
+                                else:
+                                    patient_features[f'{vital}_avg_interval_hours'] = 0
+                                    patient_features[f'{vital}_max_interval_hours'] = 0
+                            else:
+                                patient_features[f'{vital}_hours_since_last'] = np.inf
+                                patient_features[f'{vital}_avg_interval_hours'] = np.inf
+                                patient_features[f'{vital}_max_interval_hours'] = np.inf
+                        
                     else:
                         # Fill with defaults if no data
-                        for suffix in ['_mean', '_std', '_min', '_max', '_range', '_recent_mean', '_recent_trend', '_count']:
+                        suffixes = ['_mean', '_std', '_min', '_max', '_range', '_recent_mean', 
+                                  '_recent_trend', '_count', '_hours_since_last', 
+                                  '_avg_interval_hours', '_max_interval_hours']
+                        for suffix in suffixes:
                             patient_features[f'{vital}{suffix}'] = np.nan
             
             features.append(patient_features)
@@ -167,7 +288,7 @@ class FeatureEngineer:
         return pd.DataFrame(features)
     
     def _create_lab_features(self, labs_df: pd.DataFrame) -> pd.DataFrame:
-        """Create aggregated features from lab data"""
+        """Create aggregated features from lab data with temporal delta features"""
         
         # Get lab columns
         lab_cols = self.feature_config.get('lab_features', [])
@@ -181,7 +302,13 @@ class FeatureEngineer:
         features = []
         
         for patient_id in labs_df['patient_id'].unique():
-            patient_labs = labs_df[labs_df['patient_id'] == patient_id]
+            patient_labs = labs_df[labs_df['patient_id'] == patient_id].copy()
+            
+            # Sort by timestamp if available
+            date_col = 'lab_date' if 'lab_date' in patient_labs.columns else 'measurement_date'
+            if date_col in patient_labs.columns:
+                patient_labs[date_col] = pd.to_datetime(patient_labs[date_col])
+                patient_labs = patient_labs.sort_values(date_col)
             
             patient_features = {'patient_id': patient_id}
             
@@ -203,8 +330,47 @@ class FeatureEngineer:
                             patient_features[f'{lab}_high'] = (values > 1.5).sum()
                         
                         patient_features[f'{lab}_count'] = len(values)
+                        
+                        # Add Δt features (time-since-last-observation) for labs
+                        if date_col in patient_labs.columns:
+                            lab_measurements = patient_labs[patient_labs[lab].notna()]
+                            if len(lab_measurements) > 0:
+                                # Time since last lab measurement (in hours)
+                                last_lab_date = lab_measurements[date_col].iloc[-1]
+                                current_time = pd.Timestamp.now()
+                                time_since_last = (current_time - last_lab_date).total_seconds() / 3600
+                                patient_features[f'{lab}_hours_since_last'] = time_since_last
+                                
+                                # Average time between lab measurements
+                                if len(lab_measurements) > 1:
+                                    time_diffs = lab_measurements[date_col].diff().dt.total_seconds() / 3600
+                                    patient_features[f'{lab}_avg_interval_hours'] = time_diffs.mean()
+                                    patient_features[f'{lab}_max_interval_hours'] = time_diffs.max()
+                                    
+                                    # Trend analysis for labs
+                                    if len(values) >= 3:
+                                        # Simple linear trend over last 3 measurements
+                                        recent_values = values.tail(3)
+                                        x = np.arange(len(recent_values))
+                                        slope = np.polyfit(x, recent_values, 1)[0]
+                                        patient_features[f'{lab}_trend_slope'] = slope
+                                    else:
+                                        patient_features[f'{lab}_trend_slope'] = 0
+                                else:
+                                    patient_features[f'{lab}_avg_interval_hours'] = 0
+                                    patient_features[f'{lab}_max_interval_hours'] = 0
+                                    patient_features[f'{lab}_trend_slope'] = 0
+                            else:
+                                patient_features[f'{lab}_hours_since_last'] = np.inf
+                                patient_features[f'{lab}_avg_interval_hours'] = np.inf
+                                patient_features[f'{lab}_max_interval_hours'] = np.inf
+                                patient_features[f'{lab}_trend_slope'] = 0
+                        
                     else:
-                        for suffix in ['_mean', '_last', '_min', '_max', '_high', '_count']:
+                        suffixes = ['_mean', '_last', '_min', '_max', '_high', '_count',
+                                  '_hours_since_last', '_avg_interval_hours', 
+                                  '_max_interval_hours', '_trend_slope']
+                        for suffix in suffixes:
                             patient_features[f'{lab}{suffix}'] = np.nan
             
             features.append(patient_features)

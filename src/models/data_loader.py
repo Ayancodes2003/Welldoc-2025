@@ -292,6 +292,156 @@ class eICUAdapter(DatasetAdapter):
             'prediction_window_days': 30
         }
 
+class DiabetesAdapter(DatasetAdapter):
+    """Adapter for Diabetes 130-US hospitals dataset"""
+    
+    def detect_format(self, data_path: str) -> bool:
+        """Check if this looks like the diabetes dataset"""
+        path = Path(data_path)
+        
+        # Look for diabetic_data.csv or check for readmitted column
+        diabetes_file = path / 'diabetic_data.csv'
+        if diabetes_file.exists():
+            return True
+            
+        # Check any CSV file for readmitted column
+        for csv_file in path.glob('*.csv'):
+            try:
+                df_sample = pd.read_csv(csv_file, nrows=1)
+                if 'readmitted' in df_sample.columns:
+                    return True
+            except:
+                continue
+                
+        return False
+    
+    def load_and_standardize(self, data_path: str) -> Dict[str, pd.DataFrame]:
+        """Load diabetes dataset and preprocess into patients.csv and outcomes.csv"""
+        path = Path(data_path)
+        
+        # Find the diabetes data file
+        diabetes_file = None
+        if (path / 'diabetic_data.csv').exists():
+            diabetes_file = path / 'diabetic_data.csv'
+        else:
+            # Look for any CSV with readmitted column
+            for csv_file in path.glob('*.csv'):
+                try:
+                    df_sample = pd.read_csv(csv_file, nrows=1)
+                    if 'readmitted' in df_sample.columns:
+                        diabetes_file = csv_file
+                        break
+                except:
+                    continue
+        
+        if not diabetes_file:
+            raise ValueError("No diabetes dataset file found")
+        
+        logger.info(f"Loading diabetes dataset from: {diabetes_file}")
+        df = pd.read_csv(diabetes_file)
+        
+        # Preprocess the dataset
+        datasets = self._preprocess_diabetes_data(df, path)
+        
+        return datasets
+    
+    def _preprocess_diabetes_data(self, df: pd.DataFrame, save_path: Path) -> Dict[str, pd.DataFrame]:
+        """Preprocess diabetes data into patients.csv and outcomes.csv"""
+        
+        logger.info(f"Preprocessing diabetes dataset with {len(df)} records")
+        
+        # Add patient_id column (1..n)
+        df = df.reset_index(drop=True)
+        df['patient_id'] = (df.index + 1).astype(str)
+        
+        # Create patients.csv with demographics and clinical features
+        patient_columns = [
+            'patient_id', 'race', 'gender', 'age', 'weight',
+            'admission_type_id', 'discharge_disposition_id', 'admission_source_id',
+            'time_in_hospital', 'payer_code', 'medical_specialty',
+            'num_lab_procedures', 'num_procedures', 'num_medications',
+            'number_outpatient', 'number_emergency', 'number_inpatient',
+            'diag_1', 'diag_2', 'diag_3', 'number_diagnoses',
+            'max_glu_serum', 'A1Cresult',
+            # Medications
+            'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide',
+            'glimepiride', 'acetohexamide', 'glipizide', 'glyburide',
+            'tolbutamide', 'pioglitazone', 'rosiglitazone', 'acarbose',
+            'miglitol', 'troglitazone', 'tolazamide', 'examide', 'citoglipton',
+            'insulin', 'glyburide-metformin', 'glipizide-metformin',
+            'glimepiride-pioglitazone', 'metformin-rosiglitazone',
+            'metformin-pioglitazone', 'change', 'diabetesMed'
+        ]
+        
+        # Filter to available columns
+        available_patient_cols = [col for col in patient_columns if col in df.columns]
+        patients_df = df[available_patient_cols].copy()
+        
+        # Create outcomes.csv
+        # event_within_90d: 1 if readmitted = '<30' or '>30', else 0
+        patients_df['event_within_90d'] = (
+            (df['readmitted'] == '<30') | (df['readmitted'] == '>30')
+        ).astype(int)
+        
+        # time_to_event: use discharge_disposition_id as proxy or default 90 if censored
+        # For demonstration, we'll create realistic time-to-event data
+        def calculate_time_to_event(row):
+            if row['readmitted'] == '<30':
+                # Readmitted within 30 days - sample from 1-30 days
+                return np.random.uniform(1, 30)
+            elif row['readmitted'] == '>30':
+                # Readmitted after 30 days - sample from 31-90 days
+                return np.random.uniform(31, 90)
+            else:
+                # Not readmitted - censored at 90 days
+                return 90.0
+        
+        np.random.seed(42)  # For reproducibility
+        patients_df['time_to_event'] = df.apply(calculate_time_to_event, axis=1)
+        
+        # Create outcomes dataframe
+        outcomes_df = patients_df[['patient_id', 'event_within_90d', 'time_to_event']].copy()
+        
+        # Remove outcome columns from patients_df
+        patients_df = patients_df.drop(['event_within_90d', 'time_to_event'], axis=1)
+        
+        # Save processed files
+        patients_file = save_path / 'patients.csv'
+        outcomes_file = save_path / 'outcomes.csv'
+        
+        patients_df.to_csv(patients_file, index=False)
+        outcomes_df.to_csv(outcomes_file, index=False)
+        
+        logger.info(f"Saved processed patients data to: {patients_file}")
+        logger.info(f"Saved outcomes data to: {outcomes_file}")
+        logger.info(f"Event rate: {outcomes_df['event_within_90d'].mean():.1%}")
+        
+        return {
+            'patients': patients_df,
+            'outcomes': outcomes_df
+        }
+    
+    def get_feature_config(self) -> Dict[str, Any]:
+        """Return diabetes dataset specific feature configuration"""
+        return {
+            'patient_id_column': 'patient_id',
+            'outcome_column': 'event_within_90d',
+            'time_column': 'time_to_event',
+            'demographic_features': ['age', 'gender', 'race', 'weight'],
+            'clinical_features': [
+                'time_in_hospital', 'num_lab_procedures', 'num_procedures',
+                'num_medications', 'number_outpatient', 'number_emergency',
+                'number_inpatient', 'number_diagnoses'
+            ],
+            'lab_features': ['max_glu_serum', 'A1Cresult'],
+            'medication_features': [
+                'metformin', 'insulin', 'diabetesMed', 'change'
+            ],
+            'outcome_window_days': 90,
+            'prediction_window_days': 30,
+            'auto_detect_features': True
+        }
+
 class CustomAdapter(DatasetAdapter):
     """Adapter for custom dataset formats"""
     
@@ -361,7 +511,8 @@ class DynamicDataLoader:
     def __init__(self):
         self.adapters = [
             MIMICAdapter(),
-            eICUAdapter(), 
+            eICUAdapter(),
+            DiabetesAdapter(),  # Add diabetes adapter before custom
             CustomAdapter()  # Fallback adapter
         ]
         self.current_adapter = None
