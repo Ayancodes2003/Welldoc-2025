@@ -795,12 +795,23 @@ class PatientDetailView:
         
         col1, col2, col3, col4 = st.columns(4)
         
+        # Safe conversions for display
+        try:
+            age = int(patient_summary.get('age', 0)) if patient_summary.get('age') not in ['Unknown', None, ''] else 'Unknown'
+        except (ValueError, TypeError):
+            age = 'Unknown'
+        
+        try:
+            admission_count = int(patient_summary.get('admission_count', 0)) if patient_summary.get('admission_count') not in ['Unknown', None, ''] else 0
+        except (ValueError, TypeError):
+            admission_count = 0
+        
         with col1:
-            st.metric("Age", patient_summary.get('age', 'Unknown'))
+            st.metric("Age", age)
         with col2:
             st.metric("Gender", patient_summary.get('gender', 'Unknown'))
         with col3:
-            st.metric("Admissions", patient_summary.get('admission_count', 0))
+            st.metric("Admissions", admission_count)
         with col4:
             risk_color = "🔴" if risk_score > 0.7 else "🟡" if risk_score > 0.3 else "🟢"
             st.metric("Risk", f"{risk_color} {risk_category}")
@@ -1159,8 +1170,14 @@ class PatientDetailView:
         
         patient_summary = get_patient_summary(patient_id, self.datasets)
         
+        # Safe age conversion
+        try:
+            age = int(patient_summary.get('age', 0)) if patient_summary.get('age') not in ['Unknown', None, ''] else 'Unknown'
+        except (ValueError, TypeError):
+            age = 'Unknown'
+        
         st.markdown(f"**Patient ID:** {patient_id}")
-        st.markdown(f"**Age:** {patient_summary.get('age', 'Unknown')}")
+        st.markdown(f"**Age:** {age}")
         st.markdown(f"**Gender:** {patient_summary.get('gender', 'Unknown')}")
         
         st.divider()
