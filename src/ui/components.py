@@ -963,9 +963,17 @@ class PatientDetailView:
                             st.markdown(f"<div style='text-align: center; font-size: 12px;'>Impact: +{impact_size:.2f}</div>", unsafe_allow_html=True)
                         
                         with col_c:
-                            # Plain English explanation
+                            # Plain English explanation with safe calculations
+                            def safe_subtract(val1, val2):
+                                try:
+                                    if isinstance(val1, str) or isinstance(val2, str):
+                                        return 0
+                                    return val1 - val2
+                                except (TypeError, ValueError):
+                                    return 0
+                            
                             explanations = {
-                                'Age': f"At {feature['value']} years old, this is {feature['value'] - feature['baseline']} years above average, {direction} risk.",
+                                'Age': f"At {feature['value']} years old, this is {safe_subtract(feature['value'], feature['baseline'])} years above average, {direction} risk.",
                                 'Number of Medications': f"Taking {feature['value']} medications vs. typical {feature['baseline']}, {direction} complexity and risk.",
                                 'Previous Admissions': f"{feature['value']} previous admissions vs. typical {feature['baseline']}, indicating {direction}d instability.",
                                 'Length of Stay (days)': f"{feature['value']} day stay vs. typical {feature['baseline']} days, {direction} complexity.",
