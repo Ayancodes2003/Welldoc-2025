@@ -678,11 +678,38 @@ class PatientDetailView:
             st.info("🔍 Please select a patient to view detailed risk analysis.")
             return
         
+        # Generate prediction with error handling first
+        try:
+            if hasattr(st.session_state, 'trained_models') and st.session_state.trained_models:
+                model_name = list(st.session_state.trained_models.keys())[0]
+                predictor = st.session_state.trained_models[model_name]['predictor']
+                
+                patient_datasets = {
+                    key: df[df['patient_id'] == patient_id] 
+                    for key, df in self.datasets.items()
+                    if 'patient_id' in df.columns and not df[df['patient_id'] == patient_id].empty
+                }
+                
+                predictions = predictor.predict(patient_datasets)
+                
+                if not predictions.empty:
+                    risk_score = predictions['risk_score'].iloc[0]
+                    risk_category = predictions['risk_category'].iloc[0]
+                else:
+                    risk_score = 0.45
+                    risk_category = 'Medium'
+            else:
+                risk_score = 0.45
+                risk_category = 'Medium'
+        except Exception:
+            risk_score = 0.45
+            risk_category = 'Medium'
+        
         # Generate analysis in columns
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            self._render_enhanced_patient_analysis(patient_id)
+            self._render_enhanced_patient_analysis(patient_id, risk_score, risk_category)
         
         with col2:
             self._render_patient_sidebar(patient_id)
@@ -738,35 +765,8 @@ class PatientDetailView:
         
         return selected_patient
     
-    def _render_enhanced_patient_analysis(self, patient_id: str):
+    def _render_enhanced_patient_analysis(self, patient_id: str, risk_score: float, risk_category: str):
         """Render comprehensive patient analysis"""
-        
-        # Generate prediction with error handling
-        try:
-            if hasattr(st.session_state, 'trained_models') and st.session_state.trained_models:
-                model_name = list(st.session_state.trained_models.keys())[0]
-                predictor = st.session_state.trained_models[model_name]['predictor']
-                
-                patient_datasets = {
-                    key: df[df['patient_id'] == patient_id] 
-                    for key, df in self.datasets.items()
-                    if 'patient_id' in df.columns and not df[df['patient_id'] == patient_id].empty
-                }
-                
-                predictions = predictor.predict(patient_datasets)
-                
-                if not predictions.empty:
-                    risk_score = predictions['risk_score'].iloc[0]
-                    risk_category = predictions['risk_category'].iloc[0]
-                else:
-                    risk_score = 0.45
-                    risk_category = 'Medium'
-            else:
-                risk_score = 0.45
-                risk_category = 'Medium'
-        except Exception:
-            risk_score = 0.45
-            risk_category = 'Medium'
         
         # Patient profile
         self._render_enhanced_patient_profile(patient_id, risk_score, risk_category)

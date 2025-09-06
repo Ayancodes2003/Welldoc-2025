@@ -238,6 +238,31 @@ def main():
                 except Exception as e:
                     st.warning(f"Failed to train {model_type}: {str(e)}")
             
+            # Train Cox PH survival model
+            try:
+                survival_manager = SurvivalModelManager(feature_config)
+                
+                # We need to create a feature engineer for survival training
+                from src.models.baseline_models import FeatureEngineer
+                feature_engineer = FeatureEngineer(feature_config)
+                
+                survival_results = survival_manager.train_survival_models(datasets, feature_engineer)
+                
+                if 'cox' in survival_results and 'error' not in survival_results['cox']:
+                    trained_models['Cox PH'] = {
+                        'survival_manager': survival_manager,
+                        'metrics': survival_results['cox']
+                    }
+                    st.success(f"✅ Cox PH model trained successfully! C-index: {survival_results['cox'].get('c_index', 'N/A')}")
+                else:
+                    st.warning("Cox PH model training failed, using mock survival data")
+                    
+                # Store survival results for dashboard
+                st.session_state.survival_results = survival_results
+                    
+            except Exception as e:
+                st.warning(f"Failed to train Cox PH model: {str(e)}")
+            
             st.session_state.trained_models = trained_models
             st.session_state.models_trained = True
     
